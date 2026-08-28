@@ -65,36 +65,49 @@ def main():
     taken = {b["flower"] for b in all_books if b["flower"]}
 
     for book in needed:
-        if not book["flower"]:
+        # Three cases: no flower yet, a flower picked before the sentence
+        # existed, or fully described already.
+        if not book["flower"] or not book["flower_reason"]:
             book_full = notion_io.enrich(book)
-            result = pick_flower.pick(book_full, taken)
+            try:
+                if book["flower"]:
+                    result = pick_flower.describe(book_full, book["flower"])
+                else:
+                    result = pick_flower.pick(book_full, taken)
+            except Exception as e:
+                log(f"  !! skipped {book['title']}: {e}")
+                continue
             book["flower"] = result["flower"]
-            book["flower_notes"] = " · ".join(result["adjectives"])
-            book["_adjectives"] = result["adjectives"]
+            book["flower_notes"] = result["line"]
+            book["flower_reason"] = result.get("reason", "")
+            book["_adjectives"] = result.get("adjectives", [])
             book["_latin"] = result.get("latin", "")
             taken.add(result["flower"])
             notion_io.write_flower(book["id"], flower=result["flower"],
-                                   notes=book["flower_notes"])
-            log(f"  {book['title']}  ->  {result['flower']} "
-                f"({book['flower_notes']})")
-            log(f"      {result.get('reason','')}")
+                                   notes=result["line"],
+                                   reason=book["flower_reason"])
+            log(f"  {book['title']}  ->  {result['flower']}")
+            log(f"      \u201c{result['line']}\u201d")
+            log(f"      {book['flower_reason']}")
 
         if args.dry_run:
             continue
 
-        local = os.path.join(generate_flower.FLOWER_DIR,
-                             f"{generate_flower.slug(book['title'])}.png")
+        key = generate_flower.asset_key(book["title"], book["id"])
+        local = os.path.join(generate_flower.FLOWER_DIR, f"{key}.png")
         if not os.path.exists(local):
             spec = {
                 "flower": book["flower"],
                 "latin": book.get("_latin", ""),
-                "adjectives": book.get("_adjectives")
-                or (book["flower_notes"] or "").split(" · "),
+                "adjectives": book.get("_adjectives") or [],
             }
-            local = generate_flower.generate(spec, book["title"])
+            try:
+                local = generate_flower.generate(spec, book["title"], book["id"])
+            except Exception as e:
+                log(f"  !! could not draw {book['flower']}: {e}")
+                continue
             log(f"  drew {book['flower']}")
-            url = (f"{config.RAW_BASE}/flowers/"
-                   f"{generate_flower.slug(book['title'])}.png")
+            url = f"{config.RAW_BASE}/flowers/{key}.png"
             notion_io.write_flower(book["id"], image_url=url)
         book["_png"] = local
 
@@ -110,8 +123,7 @@ def main():
         hero = {
             "title": current["title"],
             "flower": current["flower"],
-            "adjectives": current.get("_adjectives")
-            or (current["flower_notes"] or "").split(" · "),
+            "line": current["flower_notes"] or "",
             "png": current["_png"],
         }
 

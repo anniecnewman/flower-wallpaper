@@ -30,6 +30,7 @@ P_GENRE = "genre"
 # Properties the script creates and writes to.
 P_FLOWER = "flower"
 P_FLOWER_NOTES = "flower notes"
+P_FLOWER_REASON = "flower reason"
 P_FLOWER_IMAGE = "flower image"
 
 STATUS_READING = "reading"

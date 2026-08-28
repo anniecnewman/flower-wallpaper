@@ -21,15 +21,33 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
-def _find_prop(props, wanted):
-    """Return the real property name matching `wanted`, or None."""
+def _find_prop(props, wanted, types=None):
+    """Return the real property name matching `wanted`, or None.
+
+    `types` restricts the match to Notion property types — without it, a
+    checkbox called "Completed" can shadow the date you actually wanted.
+    """
     target = _norm(wanted)
-    for name in props:
-        if _norm(name) == target:
+
+    def ok(name):
+        if not types:
+            return True
+        entry = props.get(name) or {}
+        return entry.get("type") in types
+
+    for name in props:                       # exact name, right type
+        if _norm(name) == target and ok(name):
             return name
-    for name in props:  # fall back to prefix match ("thoughts" -> "thoughts?")
-        if _norm(name).startswith(target):
+    for name in props:                       # prefix, right type
+        if _norm(name).startswith(target) and ok(name):
             return name
+    for name in props:                       # right type, name contains target
+        if target in _norm(name) and ok(name):
+            return name
+    if types:                                # only one of that type? take it
+        candidates = [n for n in props if ok(n)]
+        if len(candidates) == 1:
+            return candidates[0]
     return None
 
 
@@ -75,7 +93,8 @@ def ensure_schema():
         (config.P_FLOWER_NOTES, {"rich_text": {}}),
         (config.P_FLOWER_IMAGE, {"url": {}}),
     ):
-        if _find_prop(props, name) is None:
+        want_type = ("url",) if name == config.P_FLOWER_IMAGE else ("rich_text",)
+        if _find_prop(props, name, want_type) is None:
             to_add[name.title()] = spec
     if not to_add:
         return []
@@ -122,25 +141,30 @@ def fetch_books(year=None):
         for page in data["results"]:
             props = page["properties"]
 
-            def g(wanted):
-                key = _find_prop(props, wanted)
+            def g(wanted, types=None):
+                key = _find_prop(props, wanted, types)
                 return _plain(props[key]) if key else None
 
-            completed = g(config.P_COMPLETED)
+            completed = g(config.P_COMPLETED, ("date",))
+            if not isinstance(completed, str):
+                completed = None
             book = {
                 "id": page["id"],
-                "title": g(config.P_TITLE),
-                "status": (g(config.P_STATUS) or "").lower(),
-                "rating": g(config.P_RATING),
-                "tags": g(config.P_TAGS) or [],
-                "thoughts": g(config.P_THOUGHTS),
+                "title": g(config.P_TITLE, ("title",)),
+                "status": (g(config.P_STATUS, ("status", "select")) or "").lower(),
+                "rating": g(config.P_RATING, ("select", "number", "rich_text",
+                                              "multi_select", "formula")),
+                "tags": g(config.P_TAGS, ("multi_select",)) or [],
+                "thoughts": g(config.P_THOUGHTS, ("rich_text",)),
                 "completed": completed,
-                "author_ids": g(config.P_AUTHOR) or [],
-                "genre_ids": g(config.P_GENRE) or [],
-                "flower": g(config.P_FLOWER),
-                "flower_notes": g(config.P_FLOWER_NOTES),
-                "flower_image": g(config.P_FLOWER_IMAGE),
+                "author_ids": g(config.P_AUTHOR, ("relation",)) or [],
+                "genre_ids": g(config.P_GENRE, ("relation",)) or [],
+                "flower": g(config.P_FLOWER, ("rich_text",)),
+                "flower_notes": g(config.P_FLOWER_NOTES, ("rich_text",)),
+                "flower_image": g(config.P_FLOWER_IMAGE, ("url",)),
             }
+            if isinstance(book["rating"], list):
+                book["rating"] = ", ".join(book["rating"]) or None
             if not book["title"]:
                 continue
             if year and book["status"] == config.STATUS_READ:
@@ -166,13 +190,13 @@ def write_flower(page_id, flower=None, notes=None, image_url=None):
     props = get_schema()
     payload = {}
     if flower is not None:
-        key = _find_prop(props, config.P_FLOWER)
+        key = _find_prop(props, config.P_FLOWER, ("rich_text",))
         payload[key] = {"rich_text": [{"text": {"content": flower}}]}
     if notes is not None:
-        key = _find_prop(props, config.P_FLOWER_NOTES)
+        key = _find_prop(props, config.P_FLOWER_NOTES, ("rich_text",))
         payload[key] = {"rich_text": [{"text": {"content": notes}}]}
     if image_url is not None:
-        key = _find_prop(props, config.P_FLOWER_IMAGE)
+        key = _find_prop(props, config.P_FLOWER_IMAGE, ("url",))
         payload[key] = {"url": image_url}
     if not payload:
         return

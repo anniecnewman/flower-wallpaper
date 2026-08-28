@@ -1,0 +1,47 @@
+name: Build flower wallpaper
+
+on:
+  schedule:
+    - cron: "0 9 * * *"       # 09:00 UTC daily — ~5am Eastern
+  workflow_dispatch:           # the "Run workflow" button in the Actions tab
+    inputs:
+      dry_run:
+        description: "Pick flowers only — no images drawn, nothing charged"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: Build wallpaper
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python run.py --dry-run
+          else
+            python run.py
+          fi
+
+      - name: Commit new flowers and wallpaper
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name  "flower-bot"
+          git config user.email "flower-bot@users.noreply.github.com"
+          git add -A flowers wallpaper.png
+          git diff --staged --quiet || git commit -m "garden: $(date -u +%Y-%m-%d)"
+          git push

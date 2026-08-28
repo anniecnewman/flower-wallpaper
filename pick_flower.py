@@ -13,36 +13,44 @@ import config
 SYSTEM = """You assign a flower to a book, the way a 19th-century florist would \
 have — by resemblance of character, not by decoration.
 
-You will be given a book: title, author, genre, tags, the reader's star rating, \
-and sometimes a line of the reader's own notes about it. When those notes exist \
-they are the most important input you have. They tell you what the book was \
-like FOR THIS READER, and your flower should answer their reaction, not a \
-generic summary of the book. A reader who found a thriller implausible but fun \
-deserves a flower that is itself a little unbelievable.
+FIRST, KNOW THE BOOK. You have a web search tool. Unless you are certain what \
+the book actually is — its plot, subject, register, reputation — search for it \
+before choosing anything. Titles mislead. A book called "Whistler" might be a \
+biography of the painter, a legal thriller, or a memoir. Guessing from a title \
+produces a flower that fits an imaginary book, which is worse than no flower.
 
-Choose a real, illustratable flowering plant. The connection should be earned \
-through some genuine property of the plant — how it grows, when it blooms, how \
-long it lasts, its history, its folklore, what people mistake it for. Avoid the \
-obvious symbolic dictionary (red rose = love, lily = death). Reach for the \
-specific.
+Search when you are unsure. Do not pretend to knowledge you don't have.
 
-Then write ONE sentence, UNDER 20 WORDS, that goes on a wallpaper beneath the \
-illustration. It should land the connection between book and flower in a single \
-stroke — concrete, a little surprising, no clichés, no hedging. It is read at a \
-glance on a lock screen, so it must work without any other context. Do not \
-begin it with the flower's name. Never unkind about a book the reader rated \
-highly.
+THEN CHOOSE. The reader's own notes, when present, are your most important \
+input — they tell you what the book was like FOR THIS READER, and your flower \
+should answer their reaction, not a generic summary. A reader who found a \
+thriller implausible but fun deserves a flower that is itself a little \
+unbelievable.
 
-Also give three adjectives. These are NOT displayed — they steer the painting's \
-mood — so make them evocative of color and energy.
+Choose a real, illustratable flowering plant. Earn the connection through some \
+genuine property of the plant — how it grows, when it blooms, how long it \
+lasts, its history, what people mistake it for. Avoid the obvious symbolic \
+dictionary (red rose = love, lily = death).
 
-Finally, write the full reasoning in 1-2 sentences: why this flower, for this \
-book, for this reader.
+VOICE. Write plainly. Gentle and straightforward, like a knowledgeable friend \
+telling you something true, not like a poet performing. Specifically:
+- No ornate or archaic diction. No "as if memory arrives before reason does."
+- No rhetorical flourishes, inversions, or dramatic sentence rhythms.
+- Say the concrete thing. "It blooms for one night" beats "its beauty is \
+  categorical rather than decorative."
+- Short words over long ones. Plain syntax.
+- It is fine to be quiet and unremarkable. Better that than overwrought.
 
-Return ONLY valid JSON, no markdown fence:
-{"flower": "Common name", "latin": "Genus species", \
-"line": "Under twenty words.", "adjectives": ["one", "two", "three"], \
-"reason": "1-2 sentences."}"""
+Return, in JSON only, no markdown fence:
+{
+  "summary": "One plain sentence: what this book actually is. Say if unsure.",
+  "flower": "Common name",
+  "latin": "Genus species",
+  "line": "Under 20 words. Goes on a wallpaper under the illustration. \
+Plain, concrete, no flourish. Don't start with the flower's name.",
+  "adjectives": ["three", "mood", "words"],
+  "reason": "1-2 plain sentences: why this flower for this book."
+}"""
 
 
 def _describe(book):
@@ -67,23 +75,37 @@ def _norm(s):
 
 
 def _extract_json(text):
-    """Pull the first JSON object out of a reply that may carry prose."""
+    """Pull our JSON object out of a reply that may also carry search prose.
+
+    Search results bring their own braces, so take the last balanced object
+    that actually looks like ours rather than the first one we trip over.
+    """
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
     try:
-        return json.loads(cleaned)
+        obj = json.loads(cleaned)
+        if isinstance(obj, dict) and "flower" in obj:
+            return obj
     except json.JSONDecodeError:
         pass
-    start, depth = cleaned.find("{"), 0
-    if start == -1:
-        raise ValueError(f"No JSON in reply: {text[:200]!r}")
-    for i in range(start, len(cleaned)):
-        if cleaned[i] == "{":
+
+    found, depth, start = [], 0, None
+    for i, ch in enumerate(cleaned):
+        if ch == "{":
+            if depth == 0:
+                start = i
             depth += 1
-        elif cleaned[i] == "}":
+        elif ch == "}" and depth:
             depth -= 1
             if depth == 0:
-                return json.loads(cleaned[start:i + 1])
-    raise ValueError(f"Unterminated JSON: {text[:200]!r}")
+                try:
+                    obj = json.loads(cleaned[start:i + 1])
+                    if isinstance(obj, dict) and "flower" in obj:
+                        found.append(obj)
+                except json.JSONDecodeError:
+                    pass
+    if found:
+        return found[-1]
+    raise ValueError(f"No usable JSON in reply: {text[:300]!r}")
 
 
 def _call(messages):
@@ -96,14 +118,18 @@ def _call(messages):
         },
         json={
             "model": config.TEXT_MODEL,
-            "max_tokens": 900,
+            "max_tokens": 3000,
             "system": SYSTEM,
             "messages": messages,
+            "tools": [{"type": "web_search_20250305",
+                       "name": "web_search",
+                       "max_uses": 4}],
         },
-        timeout=90,
+        timeout=300,
     )
     r.raise_for_status()
-    text = "".join(b.get("text", "") for b in r.json()["content"])
+    blocks = r.json()["content"]
+    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
     return _extract_json(text)
 
 
@@ -173,14 +199,19 @@ def describe(book, flower_name):
                 },
                 json={
                     "model": config.TEXT_MODEL,
-                    "max_tokens": 900,
+                    "max_tokens": 3000,
                     "system": DESCRIBE_SYSTEM,
                     "messages": [{"role": "user", "content": prompt}],
+                    "tools": [{"type": "web_search_20250305",
+                               "name": "web_search",
+                               "max_uses": 4}],
                 },
-                timeout=90,
+                timeout=300,
             )
             r.raise_for_status()
-            text = "".join(b.get("text", "") for b in r.json()["content"])
+            blocks = r.json()["content"]
+            text = "".join(b.get("text", "") for b in blocks
+                           if b.get("type") == "text")
             result = _extract_json(text)
             if result.get("line"):
                 result["flower"] = flower_name

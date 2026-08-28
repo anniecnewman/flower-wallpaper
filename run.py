@@ -87,6 +87,8 @@ def main():
                                    notes=result["line"],
                                    reason=book["flower_reason"])
             log(f"  {book['title']}  ->  {result['flower']}")
+            if result.get("summary"):
+                log(f"      [book] {result['summary']}")
             log(f"      \u201c{result['line']}\u201d")
             log(f"      {book['flower_reason']}")
 

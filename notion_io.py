@@ -91,6 +91,7 @@ def ensure_schema():
     for name, spec in (
         (config.P_FLOWER, {"rich_text": {}}),
         (config.P_FLOWER_NOTES, {"rich_text": {}}),
+        (config.P_FLOWER_REASON, {"rich_text": {}}),
         (config.P_FLOWER_IMAGE, {"url": {}}),
     ):
         want_type = ("url",) if name == config.P_FLOWER_IMAGE else ("rich_text",)
@@ -161,6 +162,7 @@ def fetch_books(year=None):
                 "genre_ids": g(config.P_GENRE, ("relation",)) or [],
                 "flower": g(config.P_FLOWER, ("rich_text",)),
                 "flower_notes": g(config.P_FLOWER_NOTES, ("rich_text",)),
+                "flower_reason": g(config.P_FLOWER_REASON, ("rich_text",)),
                 "flower_image": g(config.P_FLOWER_IMAGE, ("url",)),
             }
             if isinstance(book["rating"], list):
@@ -186,7 +188,7 @@ def enrich(book):
     return book
 
 
-def write_flower(page_id, flower=None, notes=None, image_url=None):
+def write_flower(page_id, flower=None, notes=None, reason=None, image_url=None):
     props = get_schema()
     payload = {}
     if flower is not None:
@@ -195,6 +197,9 @@ def write_flower(page_id, flower=None, notes=None, image_url=None):
     if notes is not None:
         key = _find_prop(props, config.P_FLOWER_NOTES, ("rich_text",))
         payload[key] = {"rich_text": [{"text": {"content": notes}}]}
+    if reason is not None:
+        key = _find_prop(props, config.P_FLOWER_REASON, ("rich_text",))
+        payload[key] = {"rich_text": [{"text": {"content": reason[:1900]}}]}
     if image_url is not None:
         key = _find_prop(props, config.P_FLOWER_IMAGE, ("url",))
         payload[key] = {"url": image_url}

@@ -14,12 +14,21 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import config
 
 HERE = os.path.dirname(__file__)
-FONT_DIR = os.path.join(HERE, "fonts")
+# Fonts may live in fonts/ or sit beside the scripts — check both.
+FONT_DIRS = [os.path.join(HERE, "fonts"), HERE]
+
+
+def _font_path(filename):
+    for d in FONT_DIRS:
+        p = os.path.join(d, filename)
+        if os.path.exists(p):
+            return p
+    return os.path.join(FONT_DIRS[0], filename)
 
 
 # ------------------------------------------------------------------- fonts
 def _script(size):
-    path = os.path.join(FONT_DIR, config.TITLE_FONT)
+    path = _font_path(config.TITLE_FONT)
     try:
         return ImageFont.truetype(path, size)
     except OSError:
@@ -39,7 +48,7 @@ def _fit_script(draw, text):
 
 def _font(italic=False, size=48, weight=400):
     name = "EBGaramond-Italic[wght].ttf" if italic else "EBGaramond[wght].ttf"
-    path = os.path.join(FONT_DIR, name)
+    path = _font_path(name)
     try:
         f = ImageFont.truetype(path, size)
         try:
@@ -54,6 +63,21 @@ def _font(italic=False, size=48, weight=400):
 def _text_w(draw, text, font, tracking=0):
     w = draw.textlength(text, font=font)
     return w + tracking * max(0, len(text) - 1)
+
+
+def _wrap(draw, text, font, max_w):
+    """Break a sentence into centered rows that fit the canvas."""
+    words, rows, row = (text or "").split(), [], ""
+    for w in words:
+        trial = f"{row} {w}".strip()
+        if draw.textlength(trial, font=font) <= max_w or not row:
+            row = trial
+        else:
+            rows.append(row)
+            row = w
+    if row:
+        rows.append(row)
+    return rows[:3]
 
 
 def _centered(draw, y, text, font, fill, tracking=0):
@@ -198,8 +222,10 @@ def build(current, garden, out_path):
         y = _centered(draw, y, current["title"], tf, ink)
         y = _centered(draw, y + 6, current["flower"].upper(),
                       _font(size=34, weight=500), faded, tracking=9)
-        adjectives = " · ".join(a.lower() for a in current.get("adjectives", []))
-        _centered(draw, y + 14, adjectives, _font(italic=True, size=36), ink)
+        line_font = _font(italic=True, size=38)
+        y += 14
+        for row in _wrap(draw, current.get("line", ""), line_font, 900):
+            y = _centered(draw, y, row, line_font, ink)
 
     canvas.convert("RGB").save(out_path, "PNG")
     return out_path

@@ -16,6 +16,11 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:60]
 
 
+def asset_key(title, book_id):
+    """Unique per Notion page — two books can share a title."""
+    return f"{slug(title)}-{book_id.replace('-', '')[:8]}"
+
+
 def build_prompt(flower):
     """Style block first, then only what varies: species and mood."""
     mood = ", ".join(flower.get("adjectives", [])[:3])
@@ -42,10 +47,10 @@ def _trim(img, pad=8):
     return img.crop((l, t, r, b))
 
 
-def generate(flower, book_title):
+def generate(flower, book_title, book_id):
     """Returns the local path of the saved PNG, or an existing one."""
     os.makedirs(FLOWER_DIR, exist_ok=True)
-    path = os.path.join(FLOWER_DIR, f"{slug(book_title)}.png")
+    path = os.path.join(FLOWER_DIR, f"{asset_key(book_title, book_id)}.png")
     if os.path.exists(path):
         return path
 

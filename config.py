@@ -43,45 +43,53 @@ PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
 
 # Vertical zones, in pixels from the top.
 CLOCK_ZONE_BOTTOM = 600      # iOS clock + date live here; keep it sparse
-HERO_CENTER_Y = 1180         # center of the current-read flower
-HERO_MAX_H = 760             # its max height
-TEXT_TOP = 1620              # title / flower name / adjectives block
-BOTTOM_UI_TOP = 2500         # plant almost to the edge now
+HERO_CENTER_Y = 1275         # center of the current-read flower
+HERO_MAX_H = 620             # its max height
+TEXT_TOP = 1660              # title / flower name / adjectives block
+BOTTOM_UI_TOP = 2500         # plant almost to the bottom edge
 BUTTON_ZONE_TOP = 2270       # flashlight / camera sit in the bottom corners
 BUTTON_ZONE_W = 250          # ...within this much of each side
 
 # Each flower is tipped slightly so the garden doesn't read as a grid.
-MAX_TILT = 15                # degrees, left or right         # flashlight + camera buttons; keep it sparse
+MAX_TILT = 12                # degrees, left or right
 
-# Garden cluster: an ellipse the read-flowers scatter across.
-CLUSTER_CX, CLUSTER_CY = CANVAS_W // 2, 1360
-CLUSTER_RX, CLUSTER_RY = 520, 800
 
-# Size falloff. Most recent read book is largest, earliest smallest.
-GARDEN_MAX_H = 300
-GARDEN_MIN_H = 165
-GARDEN_MIN_ALPHA = 255       # no fading — the reference plate is fully painted
-GARDEN_MAX_ALPHA = 255
+# Garden grid. Every flower gets an equal cell, so none can ever touch.
+GARDEN_FLOWER_H = 225        # every garden flower is this tall. Fixed.
+SPACING_X = 118              # centre-to-centre spacing. Never changes with
+SPACING_Y = 134              # ...the count, so the garden looks the same always.
+
+# An invisible ellipse around the current read that no garden flower may enter.
+# The masses above and below curve around it, leaving the flanks open too.
+KEEPOUT_CY = 1420            # centre of the clear zone
+KEEPOUT_RX = 560             # how far it reaches sideways
+KEEPOUT_RY = 660             # ...and up and down
+KEEPOUT_WOBBLE = 0.075       # irregularity, so the edge never reads as drawn
+LABEL_GAP = 70               # 'reading now' sits this far inside the clear zone
+
+TEXT_CLEARANCE = 300         # blank band kept around the type, in px
 
 # ---------------------------------------------------------------- style block
 # Prepended to every image generation. Only species + mood words vary.
 STYLE_BLOCK = (
-    "Botanical illustration of a single flowering plant, in the manner of an "
-    "English cottage-garden plate. Fine ink and pencil linework with watercolor "
-    "and colored-pencil washes laid over it, hatching visible in the leaves. "
-    "The color is TRUE AND VARIED, not muted: scarlet, cornflower blue, "
-    "buttercup yellow, warm rose pink, deep violet, fresh leaf green. Clear and "
-    "saturated like an English garden in June, though never neon or synthetic. "
-    "The delicacy comes from fine linework and translucent washes, NOT from "
-    "draining or greying the color. "
+    "A botanical illustration of one flowering plant, FULLY PAINTED IN COLOR. "
+    "Every petal, leaf and stem is filled with solid, opaque, confident color — "
+    "like a mid-century wildflower identification poster. "
+    "This is NOT a pencil sketch, NOT an outline drawing, NOT line art with pale "
+    "or white fill, NOT a faint or washed-out study. If any area is left "
+    "uncolored, the image is wrong. "
+    "The palette is true and varied: scarlet, crimson, cornflower blue, violet, "
+    "buttercup yellow, warm rose pink, orange, and rich leaf greens. Colors are "
+    "clear and saturated, though a touch softer and more natural than a printed "
+    "poster — think gouache on paper rather than flat vector ink. Fine darker "
+    "linework defines the edges, but the color inside is full strength. "
     "A single specimen: one stem, its leaves, one or two blooms, three-quarter "
-    "view, growing upright. "
-    "THE BACKGROUND MUST BE COMPLETELY EMPTY AND FULLY TRANSPARENT. Do not "
-    "paint paper, parchment, card, texture, grain, a torn or ragged edge, a "
-    "wash, a tint, a vignette, or any tone at all behind the plant. No ground, "
-    "no soil, no shadow, no pot, no vase, no frame, no border, no text, no "
-    "labels, no signature. Only the plant itself, floating on nothing. "
-    "Scientific accuracy of form, painterly looseness of execution."
+    "view, growing upright, filling the frame. "
+    "THE BACKGROUND MUST BE COMPLETELY EMPTY AND FULLY TRANSPARENT. Do not paint "
+    "paper, parchment, card, texture, grain, a torn edge, a wash, a tint or a "
+    "vignette behind the plant. No ground, no soil, no shadow, no pot, no vase, "
+    "no frame, no border, no text, no labels. Only the plant, floating on "
+    "nothing."
 )
 
 # Typography. Swap TITLE_FONT for another file in fonts/ to change the hand.

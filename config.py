@@ -41,6 +41,13 @@ STATUS_READ = "read"
 CANVAS_W, CANVAS_H = 1179, 2556
 PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
 
+# Some flowers come back with a flat wash painted behind them despite the
+# prompt. Rather than cut it out — which risks eating pale petals — repaint it
+# to exactly PAPER so it disappears into the canvas. Applied at render time;
+# the saved PNGs are never modified. Set False to see the patches as they are.
+HARMONIZE = True
+HARMONIZE_TOL = 26           # how close to the wash colour counts as the wash
+
 # Vertical zones, in pixels from the top.
 CLOCK_ZONE_BOTTOM = 600      # iOS clock + date live here; keep it sparse
 HERO_CENTER_Y = 1275         # center of the current-read flower

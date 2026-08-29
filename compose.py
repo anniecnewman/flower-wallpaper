@@ -100,36 +100,48 @@ def _centered(draw, y, text, font, fill, tracking=0):
 def _harmonize(img):
     """Repaint a flat background wash to the canvas colour so it disappears.
 
-    Deliberately non-destructive: it changes colour, never transparency. If the
-    detection misfires the worst case is a pale flower going cream, not the
-    ghost outlines that deleting pixels produced.
+    Non-destructive: changes colour, never transparency. Worst case on a
+    misfire is a pale flower going cream — not the ghost outlines that
+    deleting pixels produced.
+
+    Two shapes of wash occur. Usually the plant floats in transparency with a
+    painted patch behind it. Sometimes the wash covers the entire frame, and
+    after trimming there is no transparency at all — so the frame edge is used
+    as the seed instead.
     """
     if not config.HARMONIZE:
         return img
     a = np.array(img.convert("RGBA"))
     rgb = a[:, :, :3].astype(np.int16)
     alpha = a[:, :, 3]
+    h, w = alpha.shape
 
     clear = alpha < 24
-    if clear.mean() < 0.02:              # no transparency to reason from
-        return img
-
-    # The wash shows up as opaque pixels sitting right against the empty area.
-    ring = ndimage.binary_dilation(clear, iterations=3) & (alpha > 200)
     value = rgb.max(axis=2)
     sat = value - rgb.min(axis=2)
-    ring &= (value >= 200) & (sat <= 55)
-    if ring.sum() < 400:                 # nothing wash-like at the edges
+    pale = (value >= 195) & (sat <= config.HARMONIZE_MAX_SAT)
+
+    if clear.mean() >= 0.02:
+        # Wash sits against the empty area; sample the colour along that edge.
+        ring = ndimage.binary_dilation(clear, iterations=3) & (alpha > 200) & pale
+    else:
+        # Wash fills the frame; sample the border instead.
+        ring = np.zeros_like(clear)
+        ring[:6, :] = ring[-6:, :] = True
+        ring[:, :6] = ring[:, -6:] = True
+        ring &= pale
+
+    if ring.sum() < 300:
         return img
     bg = np.median(rgb[ring], axis=0)
 
-    near = (np.abs(rgb - bg).max(axis=2) <= config.HARMONIZE_TOL) & (alpha > 0)
+    near = (np.abs(rgb - bg).max(axis=2) <= config.HARMONIZE_TOL) & pale & (alpha > 0)
     ink = ndimage.binary_closing(~(near | clear), structure=np.ones((7, 7)))
 
     labels, n = ndimage.label(~ink)
     if not n:
         return img
-    seeds = set(np.unique(labels[clear]))
+    seeds = set(np.unique(labels[clear])) if clear.any() else set()
     seeds |= set(labels[0, :]) | set(labels[-1, :]) | \
              set(labels[:, 0]) | set(labels[:, -1])
     seeds.discard(0)
@@ -138,14 +150,17 @@ def _harmonize(img):
 
     wash = np.isin(labels, list(seeds)) & near
     opaque = (alpha > 128).sum()
-    # A painted wash is legitimately most of the opaque area — the plant itself
-    # is thin. Only refuse if it would repaint essentially everything.
-    if not opaque or wash.sum() / opaque > 0.90:
+    # A wash is legitimately most of the opaque area — the plant itself is
+    # thin. Only refuse if it would repaint essentially everything.
+    if not opaque or wash.sum() / opaque > 0.94:
         return img
 
-    a[:, :, 0][wash] = config.PAPER[0]
-    a[:, :, 1][wash] = config.PAPER[1]
-    a[:, :, 2][wash] = config.PAPER[2]
+    # Soften the join so a gradient wash doesn't leave a visible step.
+    edge = ndimage.binary_dilation(wash, iterations=2) & ~wash & pale & (alpha > 0)
+    for ch in range(3):
+        a[:, :, ch][wash] = config.PAPER[ch]
+        blend = a[:, :, ch][edge].astype(np.int16)
+        a[:, :, ch][edge] = ((blend + config.PAPER[ch]) // 2).astype(np.uint8)
     return Image.fromarray(a, "RGBA")
 
 
@@ -208,7 +223,7 @@ def _in_garden(cx, cy):
     return not _keepout(cx, cy)
 
 
-def _poisson(seed=20260828, tries=30, density=0.5):
+def _poisson(seed=20260828, tries=30, density=0.36):
     """Organic scatter at a FIXED spacing, filling the garden's whole shape.
 
     Bridson's algorithm with an elliptical radius, so upright flowers sit
@@ -245,7 +260,7 @@ def _poisson(seed=20260828, tries=30, density=0.5):
             pts.append(p)
             active.append(p)
 
-    while active and len(pts) < 900:
+    while active and len(pts) < 1600:
         i = rng.randrange(len(active))
         base = active[i]
         placed = False
@@ -297,21 +312,30 @@ def _place_garden(canvas, garden):
     placed = []
     used = set()
 
+    dropped = []
     for book_id, path in garden:
         rng = random.Random(int(hashlib.md5(book_id.encode()).hexdigest()[:8], 16))
         tilt = rng.uniform(-config.MAX_TILT, config.MAX_TILT)
         wobble = rng.uniform(0.94, 1.06)
 
-        # If a flower can't find room at full size, let it grow a little
-        # smaller rather than drop out of the garden entirely.
-        for shrink in (1.0, 0.88, 0.76, 0.64):
+        # Try progressively smaller, and with progressively less breathing
+        # room, rather than let a flower fall out of the garden. Every book
+        # that has a flower gets planted.
+        attempts = [(1.0, config.GARDEN_GAP), (0.90, config.GARDEN_GAP),
+                    (0.80, config.GARDEN_GAP), (0.80, config.GARDEN_GAP // 2),
+                    (0.70, config.GARDEN_GAP // 2), (0.62, 4), (0.55, 2)]
+        if config.GARDEN_MAY_OVERLAP:
+            # A heavy reading year is a good problem. Once the space is full,
+            # flowers tuck behind their neighbours instead of being left out.
+            attempts += [(0.70, -30), (0.65, -70), (0.60, -130), (0.55, -240)]
+        done = False
+        for shrink, gap in attempts:
             img = _scaled(path, config.GARDEN_FLOWER_H * wobble * shrink)
             img = img.rotate(tilt, resample=Image.BICUBIC, expand=True)
             bbox = img.getchannel("A").getbbox()
             if bbox:
                 img = img.crop(bbox)
 
-            spot = None
             for idx, (cx, cy) in enumerate(spots):
                 if idx in used:
                     continue
@@ -326,17 +350,25 @@ def _place_garden(canvas, garden):
                 if _keepout(cx, cy) or _keepout(mid_x, box[1]) \
                         or _keepout(mid_x, box[3]):
                     continue
-                if not _clear_of(box, placed, config.GARDEN_GAP):
+                if not _clear_of(box, placed, gap):
                     continue
-                spot = (idx, x, y, box)
-                break
 
-            if spot:
-                idx, x, y, box = spot
                 canvas.alpha_composite(img, (int(x), int(y)))
                 placed.append(box)
                 used.add(idx)
+                done = True
                 break
+            if done:
+                break
+
+        if not done:
+            dropped.append(book_id)
+
+    if dropped:
+        print(f"  !! no room for {len(dropped)} flower(s): {', '.join(dropped)}",
+              flush=True)
+    else:
+        print(f"  planted all {len(garden)} garden flowers", flush=True)
 
 
 # ------------------------------------------------------------------- render

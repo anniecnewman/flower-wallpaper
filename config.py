@@ -39,7 +39,7 @@ STATUS_READ = "read"
 # ------------------------------------------------------------------- canvas
 # iPhone 15/16 Pro logical wallpaper size. Change if your device differs.
 CANVAS_W, CANVAS_H = 1179, 2556
-PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
+PAPER = (240, 226, 189)  # matches the wash the model paints, so patches disappear
 
 # Some flowers come back with a flat wash painted behind them despite the
 # prompt. Rather than cut it out — which risks eating pale petals — repaint it

@@ -42,52 +42,68 @@ def _alpha_share(img):
     return float((np.array(img.convert("RGBA"))[:, :, 3] < 16).mean())
 
 
-def cutout(img, tol=26, seal=5):
-    """Strip a flat background the model painted despite being told not to.
+def cutout(img, seal=5):
+    """Remove flat pale background the model painted, however it's arranged.
 
-    Line art has gaps in it, and a naive flood fill pours through those gaps and
-    hollows out the flower. So the ink is sealed with a morphological closing
-    first; only background still reachable from the border is removed, and
-    anything enclosed by the drawing is kept.
+    The failure this fixes: the model returns a properly transparent image but
+    paints a cream wash directly behind the plant, inside the transparent area.
+    So "does this image have transparency?" is the wrong question. What counts
+    as background is a pale, unsaturated region that connects either to the
+    image border or to already-transparent pixels.
+
+    The drawing's ink is sealed with a morphological closing first, so the fill
+    can't leak through a gap in an outline and hollow out the flower.
     """
     img = img.convert("RGBA")
     a = np.array(img)
     rgb = a[:, :, :3].astype(np.int16)
+    alpha = a[:, :, 3]
 
-    h, w = rgb.shape[:2]
-    corners = np.array([rgb[0, 0], rgb[0, w - 1], rgb[h - 1, 0], rgb[h - 1, w - 1]])
-    bg = np.median(corners, axis=0)
+    value = rgb.max(axis=2)
+    sat = value - rgb.min(axis=2)
+    pale = (value >= 205) & (sat <= 42)          # cream, ivory, white, pale grey
+    clear = alpha < 24
 
-    near_bg = (np.abs(rgb - bg).max(axis=2) <= tol) | (a[:, :, 3] < 24)
+    background_like = pale | clear
+    ink = ndimage.binary_closing(~background_like, structure=np.ones((seal, seal)))
 
-    # Seal hairline gaps in the drawing before flooding.
-    ink = ndimage.binary_closing(~near_bg, structure=np.ones((seal, seal)))
-    floodable = ~ink
-
-    labels, n = ndimage.label(floodable)
+    labels, n = ndimage.label(~ink)
     if not n:
         return img
-    border = set(labels[0, :]) | set(labels[-1, :]) | \
-             set(labels[:, 0]) | set(labels[:, -1])
-    border.discard(0)
-    outside = np.isin(labels, list(border)) & near_bg
 
-    alpha = a[:, :, 3].copy()
-    alpha[outside] = 0
+    # Seeds: anything touching the frame, plus anything already transparent.
+    seeds = set(labels[0, :]) | set(labels[-1, :]) | \
+            set(labels[:, 0]) | set(labels[:, -1])
+    seeds |= set(np.unique(labels[clear]))
+    seeds.discard(0)
+    if not seeds:
+        return img
 
-    soft = ndimage.uniform_filter(alpha.astype(np.float32), size=3)
-    alpha = np.minimum(alpha, soft.astype(np.uint8) + 8)
-    a[:, :, 3] = alpha
+    outside = np.isin(labels, list(seeds)) & background_like
+
+    new_alpha = alpha.copy()
+    new_alpha[outside] = 0
+
+    # Safety: if this would erase most of the picture, it misfired — keep the
+    # original rather than return a ghost.
+    was = (alpha > 128).sum()
+    now = (new_alpha > 128).sum()
+    if was and now / was < 0.45:
+        return img
+
+    soft = ndimage.uniform_filter(new_alpha.astype(np.float32), size=3)
+    new_alpha = np.minimum(new_alpha, soft.astype(np.uint8) + 8)
+    a[:, :, 3] = new_alpha
     return Image.fromarray(a, "RGBA")
 
 
 def recut_file(path):
-    """Re-cut a saved PNG only if it still carries a painted background."""
+    """Re-cut a saved PNG. Runs on every build, so a background that slipped
+    through gets cleaned up without paying to redraw the flower."""
     img = Image.open(path).convert("RGBA")
-    if _alpha_share(img) > 0.08:
-        return False
+    before = _alpha_share(img)
     cut = cutout(img)
-    if _alpha_share(cut) < 0.05:      # cutout achieved nothing; leave it alone
+    if _alpha_share(cut) - before < 0.01:        # nothing to remove
         return False
     _trim(cut).save(path, "PNG")
     return True
@@ -132,7 +148,5 @@ def generate(flower, book_title, book_id):
     raw = base64.b64decode(r.json()["data"][0]["b64_json"])
 
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
-    if _alpha_share(img) <= 0.08:     # model painted a background anyway
-        img = cutout(img)
-    _trim(img).save(path, "PNG")
+    _trim(cutout(img)).save(path, "PNG")
     return path

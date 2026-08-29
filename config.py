@@ -51,13 +51,14 @@ BUTTON_ZONE_TOP = 2270       # flashlight / camera sit in the bottom corners
 BUTTON_ZONE_W = 250          # ...within this much of each side
 
 # Each flower is tipped slightly so the garden doesn't read as a grid.
-MAX_TILT = 12                # degrees, left or right
+MAX_TILT = 22                # degrees, left or right
 
 
 # Garden grid. Every flower gets an equal cell, so none can ever touch.
 GARDEN_FLOWER_H = 225        # every garden flower is this tall. Fixed.
-SPACING_X = 118              # centre-to-centre spacing. Never changes with
-SPACING_Y = 134              # ...the count, so the garden looks the same always.
+GARDEN_GAP = 16              # painted edges must stay this far apart, always
+SPACING_X = 104              # centre-to-centre spacing. Never changes with
+SPACING_Y = 120              # ...the count, so the garden looks the same always.
 
 # An invisible ellipse around the current read that no garden flower may enter.
 # The masses above and below curve around it, leaving the flanks open too.

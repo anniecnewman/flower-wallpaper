@@ -42,53 +42,50 @@ def _alpha_share(img):
     return float((np.array(img.convert("RGBA"))[:, :, 3] < 16).mean())
 
 
-def cutout(img, seal=5):
-    """Remove flat pale background the model painted, however it's arranged.
+def cutout(img, tol=22, seal=7):
+    """Strip a flat background the model painted instead of leaving it empty.
 
-    The failure this fixes: the model returns a properly transparent image but
-    paints a cream wash directly behind the plant, inside the transparent area.
-    So "does this image have transparency?" is the wrong question. What counts
-    as background is a pale, unsaturated region that connects either to the
-    image border or to already-transparent pixels.
-
-    The drawing's ink is sealed with a morphological closing first, so the fill
-    can't leak through a gap in an outline and hollow out the flower.
+    Deliberately conservative. An earlier version treated "pale and
+    unsaturated" as background, which is also an exact description of a
+    colored-pencil wash — it deleted the flowers and left ghost outlines. So
+    this only removes colour that closely matches the actual corner colour AND
+    reaches the frame, and it refuses to run at all if the model already
+    returned real transparency.
     """
     img = img.convert("RGBA")
+    if _alpha_share(img) > 0.20:          # already transparent — leave it alone
+        return img
+
     a = np.array(img)
     rgb = a[:, :, :3].astype(np.int16)
     alpha = a[:, :, 3]
 
-    value = rgb.max(axis=2)
-    sat = value - rgb.min(axis=2)
-    pale = (value >= 205) & (sat <= 42)          # cream, ivory, white, pale grey
-    clear = alpha < 24
+    h, w = rgb.shape[:2]
+    corners = np.array([rgb[0, 0], rgb[0, w - 1], rgb[h - 1, 0], rgb[h - 1, w - 1]])
+    if corners.std(axis=0).max() > 18:    # corners disagree; not a flat ground
+        return img
+    bg = np.median(corners, axis=0)
 
-    background_like = pale | clear
-    ink = ndimage.binary_closing(~background_like, structure=np.ones((seal, seal)))
+    near_bg = (np.abs(rgb - bg).max(axis=2) <= tol) | (alpha < 24)
+    ink = ndimage.binary_closing(~near_bg, structure=np.ones((seal, seal)))
 
     labels, n = ndimage.label(~ink)
     if not n:
         return img
-
-    # Seeds: anything touching the frame, plus anything already transparent.
-    seeds = set(labels[0, :]) | set(labels[-1, :]) | \
-            set(labels[:, 0]) | set(labels[:, -1])
-    seeds |= set(np.unique(labels[clear]))
-    seeds.discard(0)
-    if not seeds:
+    edge = set(labels[0, :]) | set(labels[-1, :]) | \
+           set(labels[:, 0]) | set(labels[:, -1])
+    edge.discard(0)
+    if not edge:
         return img
-
-    outside = np.isin(labels, list(seeds)) & background_like
+    outside = np.isin(labels, list(edge)) & near_bg
 
     new_alpha = alpha.copy()
     new_alpha[outside] = 0
 
-    # Safety: if this would erase most of the picture, it misfired — keep the
-    # original rather than return a ghost.
+    # Hard guard: this should shave a margin, never gut the picture.
     was = (alpha > 128).sum()
     now = (new_alpha > 128).sum()
-    if was and now / was < 0.45:
+    if was and now / was < 0.70:
         return img
 
     soft = ndimage.uniform_filter(new_alpha.astype(np.float32), size=3)
@@ -98,15 +95,9 @@ def cutout(img, seal=5):
 
 
 def recut_file(path):
-    """Re-cut a saved PNG. Runs on every build, so a background that slipped
-    through gets cleaned up without paying to redraw the flower."""
-    img = Image.open(path).convert("RGBA")
-    before = _alpha_share(img)
-    cut = cutout(img)
-    if _alpha_share(cut) - before < 0.01:        # nothing to remove
-        return False
-    _trim(cut).save(path, "PNG")
-    return True
+    """Disabled. Re-processing finished art is how the ghost-outline bug got
+    into the garden twice; a bad flower is cheaper to redraw than to repair."""
+    return False
 
 
 def _trim(img, pad=8):

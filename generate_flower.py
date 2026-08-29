@@ -38,50 +38,58 @@ def build_prompt(flower):
     )
 
 
-def cutout(img, tol=34):
-    """Strip any flat background the model painted despite being told not to.
+def _alpha_share(img):
+    return float((np.array(img.convert("RGBA"))[:, :, 3] < 16).mean())
 
-    Only removes background-colored pixels CONNECTED to the image border, so a
-    cream petal in the middle of a bloom survives.
+
+def cutout(img, tol=26, seal=5):
+    """Strip a flat background the model painted despite being told not to.
+
+    Line art has gaps in it, and a naive flood fill pours through those gaps and
+    hollows out the flower. So the ink is sealed with a morphological closing
+    first; only background still reachable from the border is removed, and
+    anything enclosed by the drawing is kept.
     """
     img = img.convert("RGBA")
     a = np.array(img)
     rgb = a[:, :, :3].astype(np.int16)
 
-    # Corner pixels are background if anything is.
     h, w = rgb.shape[:2]
     corners = np.array([rgb[0, 0], rgb[0, w - 1], rgb[h - 1, 0], rgb[h - 1, w - 1]])
     bg = np.median(corners, axis=0)
 
     near_bg = (np.abs(rgb - bg).max(axis=2) <= tol) | (a[:, :, 3] < 24)
 
-    labels, n = ndimage.label(near_bg)
-    if n:
-        edge = set(labels[0, :]) | set(labels[-1, :]) | \
-               set(labels[:, 0]) | set(labels[:, -1])
-        edge.discard(0)
-        outside = np.isin(labels, list(edge))
-    else:
-        outside = np.zeros_like(near_bg)
+    # Seal hairline gaps in the drawing before flooding.
+    ink = ndimage.binary_closing(~near_bg, structure=np.ones((seal, seal)))
+    floodable = ~ink
+
+    labels, n = ndimage.label(floodable)
+    if not n:
+        return img
+    border = set(labels[0, :]) | set(labels[-1, :]) | \
+             set(labels[:, 0]) | set(labels[:, -1])
+    border.discard(0)
+    outside = np.isin(labels, list(border)) & near_bg
 
     alpha = a[:, :, 3].copy()
     alpha[outside] = 0
 
-    # Soften the cut by one pixel so edges don't look scissored.
     soft = ndimage.uniform_filter(alpha.astype(np.float32), size=3)
     alpha = np.minimum(alpha, soft.astype(np.uint8) + 8)
-
     a[:, :, 3] = alpha
     return Image.fromarray(a, "RGBA")
 
 
 def recut_file(path):
-    """Re-cut an already-saved PNG that still carries a painted background."""
+    """Re-cut a saved PNG only if it still carries a painted background."""
     img = Image.open(path).convert("RGBA")
-    transparent = (np.array(img)[:, :, 3] < 16).mean()
-    if transparent > 0.12:
-        return False                      # already cut out
-    _trim(cutout(img)).save(path, "PNG")
+    if _alpha_share(img) > 0.08:
+        return False
+    cut = cutout(img)
+    if _alpha_share(cut) < 0.05:      # cutout achieved nothing; leave it alone
+        return False
+    _trim(cut).save(path, "PNG")
     return True
 
 
@@ -124,5 +132,7 @@ def generate(flower, book_title, book_id):
     raw = base64.b64decode(r.json()["data"][0]["b64_json"])
 
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
-    _trim(cutout(img)).save(path, "PNG")
+    if _alpha_share(img) <= 0.08:     # model painted a background anyway
+        img = cutout(img)
+    _trim(img).save(path, "PNG")
     return path

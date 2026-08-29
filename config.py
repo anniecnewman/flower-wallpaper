@@ -39,16 +39,35 @@ STATUS_READ = "read"
 # ------------------------------------------------------------------- canvas
 # iPhone 15/16 Pro logical wallpaper size. Change if your device differs.
 CANVAS_W, CANVAS_H = 1179, 2556
-PAPER = (240, 226, 189)  # matches the wash the model paints, so patches disappear
+PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
 
 # Some flowers come back with a flat wash painted behind them despite the
 # prompt. Rather than cut it out — which risks eating pale petals — repaint it
 # to exactly PAPER so it disappears into the canvas. Applied at render time;
 # the saved PNGs are never modified. Set False to see the patches as they are.
 HARMONIZE = True
-HARMONIZE_TOL = 52           # how close to the wash colour counts as the wash
-HARMONIZE_MAX_SAT = 62       # ...and it must be this unsaturated, so petals are safe
-HARMONIZE_MAX_TEXTURE = 11   # a wash is flat; drawn petals have veins and lines
+HARMONIZE_MIN_VALUE = 195    # a wash is light...
+HARMONIZE_MAX_SAT = 62       # ...and unsaturated. Petals and leaves are neither.
+HARMONIZE_INK = 168          # anything darker than this counts as drawn line
+
+# ------------------------------------------------------------------- seasons
+# The flowers are drawn once, in high summer colour. The season is applied at
+# render time by shifting only the GREENS — leaf greens are what make a
+# botanical plate read spring or autumn, not the background. Petals, being
+# saturated reds, blues and violets, are left alone.
+#
+# Set SEASON to "auto" to follow the calendar, or force one of:
+# "spring", "summer", "autumn", "winter".
+SEASON = "autumn"
+
+# Per season: (ground colour, ink colour, green hue shift, green desaturation,
+#              green darkening, warm overlay strength)
+SEASONS = {
+    "spring": ((240, 226, 189), (58, 52, 44), 0.030, -0.10, -0.04, 0.00),
+    "summer": ((240, 226, 189), (58, 52, 44), 0.000, 0.00, 0.00, 0.00),
+    "autumn": ((196, 146, 116), (52, 30, 22), -0.050, -0.35, 0.08, 0.18),
+    "winter": ((234, 224, 208), (54, 50, 48), -0.010, 0.30, 0.12, 0.04),
+}
 
 # Vertical zones, in pixels from the top.
 CLOCK_ZONE_BOTTOM = 70       # plant right up to the top; the clock sits over it

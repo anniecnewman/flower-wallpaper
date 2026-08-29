@@ -9,6 +9,14 @@ on:
         description: "Pick flowers only — no images drawn, nothing charged"
         type: boolean
         default: false
+      redraw:
+        description: "Redraw ALL flowers from scratch (costs ~4c each)"
+        type: boolean
+        default: false
+      sample:
+        description: "Draw only this many flowers, to check the style (0 = all)"
+        type: string
+        default: "0"
 
 permissions:
   contents: write
@@ -25,6 +33,10 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      - name: Clear existing flowers
+        if: ${{ inputs.redraw == true }}
+        run: rm -rf flowers && echo "flowers cleared — all will be redrawn"
+
       - name: Build wallpaper
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -34,7 +46,7 @@ jobs:
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             python run.py --dry-run
           else
-            python run.py
+            python run.py --sample "${{ inputs.sample || 0 }}"
           fi
 
       - name: Commit new flowers and wallpaper

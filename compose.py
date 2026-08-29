@@ -115,74 +115,130 @@ def _overlap(a, b):
     return inter / small if small else 0
 
 
-def _blocked(cx, cy):
-    """Zones a flower may not sit in: the hero, the type, the iOS buttons."""
-    if (config.CANVAS_W / 2 - 300 < cx < config.CANVAS_W / 2 + 300
-            and config.HERO_CENTER_Y - 340 < cy < config.TEXT_TOP - 30):
+def _text_band():
+    """Vertical span kept clear so the type has air around it."""
+    return (config.TEXT_TOP - 70, config.TEXT_TOP + config.TEXT_CLEARANCE)
+
+
+def _keepout(cx, cy):
+    """Inside the clear zone around the current read?
+
+    A plain ellipse would leave a visibly drawn arc, so the boundary is warped
+    by a couple of slow sine terms — the edge stays roughly circular but reads
+    as something that grew rather than something ruled.
+    """
+    dx = (cx - config.CANVAS_W / 2) / config.KEEPOUT_RX
+    dy = (cy - config.KEEPOUT_CY) / config.KEEPOUT_RY
+    d = math.hypot(dx, dy)
+    if d == 0:
         return True
-    if (40 < cx < config.CANVAS_W - 40
-            and config.TEXT_TOP - 40 < cy < config.TEXT_TOP + 300):
-        return True
+    ang = math.atan2(dy, dx)
+    wobble = (1
+              + config.KEEPOUT_WOBBLE * math.sin(3 * ang + 0.9)
+              + config.KEEPOUT_WOBBLE * 0.6 * math.sin(5 * ang - 2.1))
+    return d < wobble
+
+
+def _in_garden(cx, cy):
+    """True where a flower may grow: anywhere but the clear zone, the type,
+    the clock, and the two bottom-corner buttons."""
+    if cy < config.CLOCK_ZONE_BOTTOM + 40 or cy > config.BOTTOM_UI_TOP:
+        return False
     if cy > config.BUTTON_ZONE_TOP and (cx < config.BUTTON_ZONE_W
                                         or cx > config.CANVAS_W - config.BUTTON_ZONE_W):
-        return True
-    return False
+        return False
+    t0, t1 = _text_band()
+    if t0 < cy < t1:
+        return False
+    return not _keepout(cx, cy)
 
 
-def _seats(cols=6, rows=11):
-    """Planting order: bottom center first, then outward and upward.
+def _poisson(seed=20260828, tries=30):
+    """Organic scatter at a FIXED spacing, filling the garden's whole shape.
 
-    Rows fill from the bottom of the screen up. Within a row, seats nearest
-    the middle are taken first. As the bottom fills, later books climb the
-    sides past the hero and finally arch over the top — which is how the
-    garden grows over a year.
+    Bridson's algorithm with an elliptical radius, so upright flowers sit
+    closer side-to-side than head-to-toe. Spacing never varies with the number
+    of books — a bigger year simply reaches further up the screen.
     """
-    x0, x1 = 30, config.CANVAS_W - 30
-    y0, y1 = config.CLOCK_ZONE_BOTTOM + 110, config.BOTTOM_UI_TOP
-    cw, ch = (x1 - x0) / cols, (y1 - y0) / rows
+    rx, ry = config.SPACING_X, config.SPACING_Y
+    rng = random.Random(seed)
 
-    seats = []
-    for r in range(rows):
-        for c in range(cols):
-            rng = random.Random(r * 137 + c * 31)
-            cx = x0 + cw * (c + 0.5) + rng.uniform(-cw * 0.26, cw * 0.26)
-            cy = y0 + ch * (r + 0.5) + rng.uniform(-ch * 0.24, ch * 0.24)
-            if _blocked(cx, cy):
+    def far_enough(p, pts):
+        for q in pts:
+            dx = (p[0] - q[0]) / rx
+            dy = (p[1] - q[1]) / ry
+            if dx * dx + dy * dy < 1.0:
+                return False
+        return True
+
+    # Seed both masses, and both flanks of each, or the scatter can't spread.
+    cx = config.CANVAS_W / 2
+    seeds = [(cx, config.BOTTOM_UI_TOP - ry * 0.5),
+             (150, config.CANVAS_H - 260), (config.CANVAS_W - 150, config.CANVAS_H - 260),
+             (cx, config.CLOCK_ZONE_BOTTOM + 120),
+             (170, config.CLOCK_ZONE_BOTTOM + 120),
+             (config.CANVAS_W - 170, config.CLOCK_ZONE_BOTTOM + 120),
+             (90, config.KEEPOUT_CY), (config.CANVAS_W - 90, config.KEEPOUT_CY)]
+
+    pts, active = [], []
+    for p in seeds:
+        if _in_garden(*p) and far_enough(p, pts):
+            pts.append(p)
+            active.append(p)
+
+    while active and len(pts) < 400:
+        i = rng.randrange(len(active))
+        base = active[i]
+        placed = False
+        for _ in range(tries):
+            ang = rng.uniform(0, 2 * math.pi)
+            rad = rng.uniform(1.0, 1.85)
+            p = (base[0] + math.cos(ang) * rx * rad,
+                 base[1] + math.sin(ang) * ry * rad)
+            if not (20 < p[0] < config.CANVAS_W - 20):
                 continue
-            seats.append((r, abs(cx - config.CANVAS_W / 2), cx, cy))
+            if not _in_garden(*p):
+                continue
+            if far_enough(p, pts):
+                pts.append(p)
+                active.append(p)
+                placed = True
+                break
+        if not placed:
+            active.pop(i)
 
-    # bottom rows first (high r), and within a row the middle first
-    seats.sort(key=lambda s: (-s[0], s[1]))
-    return [(cx, cy) for _, _, cx, cy in seats]
+    # Planted from the bottom middle outward and upward.
+    pts.sort(key=lambda p: (-round(p[1] / (ry * 0.75)),
+                            abs(p[0] - config.CANVAS_W / 2)))
+    return pts
 
 
 def _place_garden(canvas, garden):
-    """garden: (book_id, png_path), OLDEST first — the first planted."""
-    n = len(garden)
-    if n == 0:
+    """garden: (book_id, png_path), OLDEST first — planted from the bottom up."""
+    if not garden:
         return
-    seats = _seats()
-    if n > len(seats):
-        seats = _seats(cols=7, rows=13)
+    pts = _poisson()
+    t0, t1 = _text_band()
 
-    hero_x, hero_y = config.CANVAS_W / 2, config.HERO_CENTER_Y
-    far = math.hypot(config.CANVAS_W / 2, config.CANVAS_H / 2)
-
-    for (book_id, path), (cx, cy) in zip(garden, seats):
+    for (book_id, path), (cx, cy) in zip(garden, pts):
         rng = random.Random(int(hashlib.md5(book_id.encode()).hexdigest()[:8], 16))
-
-        # Nearer the hero reads as nearer the viewer, so it's drawn larger.
-        d = math.hypot(cx - hero_x, (cy - hero_y) * 0.8) / far
-        h = config.GARDEN_MAX_H - (config.GARDEN_MAX_H - config.GARDEN_MIN_H) * min(1, d)
-        h *= rng.uniform(0.92, 1.08)
-
-        img = _scaled(path, h)
         tilt = rng.uniform(-config.MAX_TILT, config.MAX_TILT)
+
+        img = _scaled(path, config.GARDEN_FLOWER_H * rng.uniform(0.95, 1.05))
+        max_w = config.SPACING_X * 1.75
+        if img.width > max_w:
+            img = _scaled(path, config.GARDEN_FLOWER_H * max_w / img.width)
         img = img.rotate(tilt, resample=Image.BICUBIC, expand=True)
 
-        x = int(min(max(10, cx - img.width / 2), config.CANVAS_W - 10 - img.width))
-        y = int(min(max(config.CLOCK_ZONE_BOTTOM + 40, cy - img.height / 2),
-                    config.CANVAS_H - 10 - img.height))
+        x = int(min(max(4, cx - img.width / 2), config.CANVAS_W - 4 - img.width))
+        y = int(min(max(config.CLOCK_ZONE_BOTTOM + 20, cy - img.height / 2),
+                    config.CANVAS_H - 4 - img.height))
+
+        if y < t1 and y + img.height > t0:      # tall stem reaching into the type
+            y = int(t0 - img.height - 10) if cy < (t0 + t1) / 2 else int(t1 + 10)
+            if y < config.CLOCK_ZONE_BOTTOM or y + img.height > config.CANVAS_H:
+                continue
+
         canvas.alpha_composite(img, (x, y))
 
 
@@ -194,25 +250,6 @@ def build(current, garden, out_path):
                        config.PAPER + (255,))
 
     _place_garden(canvas, garden)
-
-    # Soft cream veil so type stays readable over a dense garden.
-    # Built as a true radial falloff — a blurred hard ellipse leaves a halo.
-    if current:
-        gw, gh = 240, 120
-        grad = Image.new("L", (gw, gh), 0)
-        gd = ImageDraw.Draw(grad)
-        steps = 60
-        for i in range(steps):
-            f = i / steps
-            a = int(242 * f ** 1.25)   # opaque at the center, clear at the rim
-            gd.ellipse([gw / 2 * f, gh / 2 * f,
-                        gw - gw / 2 * f, gh - gh / 2 * f], fill=a)
-        grad = grad.resize((config.CANVAS_W + 200, 620), Image.LANCZOS)
-        grad = grad.filter(ImageFilter.GaussianBlur(20))
-        veil = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        veil.paste(Image.new("RGBA", grad.size, config.PAPER + (255,)),
-                   (-100, config.TEXT_TOP - 150), grad)
-        canvas.alpha_composite(veil)
 
     ink = (58, 52, 44, 255)
     faded = (120, 110, 96, 255)
@@ -226,7 +263,9 @@ def build(current, garden, out_path):
                 int(config.HERO_CENTER_Y - hero.height / 2),
             ))
 
-        _centered(draw, config.CLOCK_ZONE_BOTTOM + 20, "reading now",
+        # Inside the clear zone, just above the flower it refers to.
+        label_y = config.KEEPOUT_CY - config.KEEPOUT_RY + config.LABEL_GAP
+        _centered(draw, label_y, "reading now",
                   _font(italic=True, size=40), faded, tracking=6)
 
         y = config.TEXT_TOP

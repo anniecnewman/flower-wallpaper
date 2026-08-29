@@ -46,8 +46,9 @@ PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
 # to exactly PAPER so it disappears into the canvas. Applied at render time;
 # the saved PNGs are never modified. Set False to see the patches as they are.
 HARMONIZE = True
-HARMONIZE_TOL = 46           # how close to the wash colour counts as the wash
+HARMONIZE_TOL = 52           # how close to the wash colour counts as the wash
 HARMONIZE_MAX_SAT = 62       # ...and it must be this unsaturated, so petals are safe
+HARMONIZE_MAX_TEXTURE = 11   # a wash is flat; drawn petals have veins and lines
 
 # Vertical zones, in pixels from the top.
 CLOCK_ZONE_BOTTOM = 70       # plant right up to the top; the clock sits over it

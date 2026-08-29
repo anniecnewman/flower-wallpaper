@@ -9,6 +9,9 @@ import hashlib
 import math
 import os
 import random
+
+import numpy as np
+from scipy import ndimage
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 import config
@@ -94,8 +97,60 @@ def _centered(draw, y, text, font, fill, tracking=0):
 
 
 # ------------------------------------------------------------------ layout
+def _harmonize(img):
+    """Repaint a flat background wash to the canvas colour so it disappears.
+
+    Deliberately non-destructive: it changes colour, never transparency. If the
+    detection misfires the worst case is a pale flower going cream, not the
+    ghost outlines that deleting pixels produced.
+    """
+    if not config.HARMONIZE:
+        return img
+    a = np.array(img.convert("RGBA"))
+    rgb = a[:, :, :3].astype(np.int16)
+    alpha = a[:, :, 3]
+
+    clear = alpha < 24
+    if clear.mean() < 0.02:              # no transparency to reason from
+        return img
+
+    # The wash shows up as opaque pixels sitting right against the empty area.
+    ring = ndimage.binary_dilation(clear, iterations=3) & (alpha > 200)
+    value = rgb.max(axis=2)
+    sat = value - rgb.min(axis=2)
+    ring &= (value >= 200) & (sat <= 55)
+    if ring.sum() < 400:                 # nothing wash-like at the edges
+        return img
+    bg = np.median(rgb[ring], axis=0)
+
+    near = (np.abs(rgb - bg).max(axis=2) <= config.HARMONIZE_TOL) & (alpha > 0)
+    ink = ndimage.binary_closing(~(near | clear), structure=np.ones((7, 7)))
+
+    labels, n = ndimage.label(~ink)
+    if not n:
+        return img
+    seeds = set(np.unique(labels[clear]))
+    seeds |= set(labels[0, :]) | set(labels[-1, :]) | \
+             set(labels[:, 0]) | set(labels[:, -1])
+    seeds.discard(0)
+    if not seeds:
+        return img
+
+    wash = np.isin(labels, list(seeds)) & near
+    opaque = (alpha > 128).sum()
+    # A painted wash is legitimately most of the opaque area — the plant itself
+    # is thin. Only refuse if it would repaint essentially everything.
+    if not opaque or wash.sum() / opaque > 0.90:
+        return img
+
+    a[:, :, 0][wash] = config.PAPER[0]
+    a[:, :, 1][wash] = config.PAPER[1]
+    a[:, :, 2][wash] = config.PAPER[2]
+    return Image.fromarray(a, "RGBA")
+
+
 def _scaled(path, target_h, alpha=255):
-    img = Image.open(path).convert("RGBA")
+    img = _harmonize(Image.open(path).convert("RGBA"))
     ratio = target_h / img.height
     img = img.resize((max(1, int(img.width * ratio)), int(target_h)),
                      Image.LANCZOS)

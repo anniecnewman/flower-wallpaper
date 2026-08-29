@@ -153,14 +153,18 @@ def _in_garden(cx, cy):
     return not _keepout(cx, cy)
 
 
-def _poisson(seed=20260828, tries=30):
+def _poisson(seed=20260828, tries=30, density=0.5):
     """Organic scatter at a FIXED spacing, filling the garden's whole shape.
 
     Bridson's algorithm with an elliptical radius, so upright flowers sit
     closer side-to-side than head-to-toe. Spacing never varies with the number
     of books — a bigger year simply reaches further up the screen.
     """
-    rx, ry = config.SPACING_X, config.SPACING_Y
+    # A dense lattice of candidate positions. Actual separation is enforced
+    # later against each flower's painted extents, so this only needs to offer
+    # plenty of well-spread options to choose from.
+    rx = config.SPACING_X * density
+    ry = config.SPACING_Y * density
     rng = random.Random(seed)
 
     def far_enough(p, pts):
@@ -186,7 +190,7 @@ def _poisson(seed=20260828, tries=30):
             pts.append(p)
             active.append(p)
 
-    while active and len(pts) < 400:
+    while active and len(pts) < 900:
         i = rng.randrange(len(active))
         base = active[i]
         placed = False
@@ -213,33 +217,71 @@ def _poisson(seed=20260828, tries=30):
     return pts
 
 
+def _clear_of(box, placed, gap):
+    """True if this rectangle keeps `gap` px from every placed flower."""
+    x1, y1, x2, y2 = box
+    for (px1, py1, px2, py2) in placed:
+        if (x1 - gap < px2 and x2 + gap > px1
+                and y1 - gap < py2 and y2 + gap > py1):
+            return False
+    return True
+
+
 def _place_garden(canvas, garden):
-    """garden: (book_id, png_path), OLDEST first — planted from the bottom up."""
+    """garden: (book_id, png_path), OLDEST first — planted from the bottom up.
+
+    Poisson spacing distributes the centres evenly, but a sprawling nasturtium
+    and a narrow spike are very different widths at the same centre distance.
+    So every flower is checked against the painted extents of the ones already
+    down, and moved to the next free spot if it would touch.
+    """
     if not garden:
         return
-    pts = _poisson()
+    spots = _poisson()
     t0, t1 = _text_band()
+    placed = []
+    used = set()
 
-    for (book_id, path), (cx, cy) in zip(garden, pts):
+    for book_id, path in garden:
         rng = random.Random(int(hashlib.md5(book_id.encode()).hexdigest()[:8], 16))
         tilt = rng.uniform(-config.MAX_TILT, config.MAX_TILT)
+        wobble = rng.uniform(0.94, 1.06)
 
-        img = _scaled(path, config.GARDEN_FLOWER_H * rng.uniform(0.95, 1.05))
-        max_w = config.SPACING_X * 1.75
-        if img.width > max_w:
-            img = _scaled(path, config.GARDEN_FLOWER_H * max_w / img.width)
-        img = img.rotate(tilt, resample=Image.BICUBIC, expand=True)
+        # If a flower can't find room at full size, let it grow a little
+        # smaller rather than drop out of the garden entirely.
+        for shrink in (1.0, 0.88, 0.76, 0.64):
+            img = _scaled(path, config.GARDEN_FLOWER_H * wobble * shrink)
+            img = img.rotate(tilt, resample=Image.BICUBIC, expand=True)
+            bbox = img.getchannel("A").getbbox()
+            if bbox:
+                img = img.crop(bbox)
 
-        x = int(min(max(4, cx - img.width / 2), config.CANVAS_W - 4 - img.width))
-        y = int(min(max(config.CLOCK_ZONE_BOTTOM + 20, cy - img.height / 2),
-                    config.CANVAS_H - 4 - img.height))
+            spot = None
+            for idx, (cx, cy) in enumerate(spots):
+                if idx in used:
+                    continue
+                x = min(max(6, cx - img.width / 2), config.CANVAS_W - 6 - img.width)
+                y = min(max(config.CLOCK_ZONE_BOTTOM + 20, cy - img.height / 2),
+                        config.CANVAS_H - 6 - img.height)
+                box = (x, y, x + img.width, y + img.height)
 
-        if y < t1 and y + img.height > t0:      # tall stem reaching into the type
-            y = int(t0 - img.height - 10) if cy < (t0 + t1) / 2 else int(t1 + 10)
-            if y < config.CLOCK_ZONE_BOTTOM or y + img.height > config.CANVAS_H:
-                continue
+                if box[1] < t1 and box[3] > t0:
+                    continue
+                mid_x = box[0] + img.width / 2
+                if _keepout(cx, cy) or _keepout(mid_x, box[1]) \
+                        or _keepout(mid_x, box[3]):
+                    continue
+                if not _clear_of(box, placed, config.GARDEN_GAP):
+                    continue
+                spot = (idx, x, y, box)
+                break
 
-        canvas.alpha_composite(img, (x, y))
+            if spot:
+                idx, x, y, box = spot
+                canvas.alpha_composite(img, (int(x), int(y)))
+                placed.append(box)
+                used.add(idx)
+                break
 
 
 # ------------------------------------------------------------------- render

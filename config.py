@@ -46,10 +46,11 @@ PAPER = (247, 243, 233)  # warm cream, matches the field-guide plate
 # to exactly PAPER so it disappears into the canvas. Applied at render time;
 # the saved PNGs are never modified. Set False to see the patches as they are.
 HARMONIZE = True
-HARMONIZE_TOL = 26           # how close to the wash colour counts as the wash
+HARMONIZE_TOL = 46           # how close to the wash colour counts as the wash
+HARMONIZE_MAX_SAT = 62       # ...and it must be this unsaturated, so petals are safe
 
 # Vertical zones, in pixels from the top.
-CLOCK_ZONE_BOTTOM = 600      # iOS clock + date live here; keep it sparse
+CLOCK_ZONE_BOTTOM = 70       # plant right up to the top; the clock sits over it
 HERO_CENTER_Y = 1275         # center of the current-read flower
 HERO_MAX_H = 620             # its max height
 TEXT_TOP = 1660              # title / flower name / adjectives block
@@ -63,7 +64,9 @@ MAX_TILT = 22                # degrees, left or right
 
 # Garden grid. Every flower gets an equal cell, so none can ever touch.
 GARDEN_FLOWER_H = 225        # every garden flower is this tall. Fixed.
-GARDEN_GAP = 16              # painted edges must stay this far apart, always
+GARDEN_GAP = 16              # painted edges stay this far apart while there's room
+GARDEN_MAY_OVERLAP = True    # once the garden is full, let flowers tuck behind
+                             # each other rather than drop out of the year
 SPACING_X = 104              # centre-to-centre spacing. Never changes with
 SPACING_Y = 120              # ...the count, so the garden looks the same always.
 

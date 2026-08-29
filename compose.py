@@ -115,62 +115,74 @@ def _overlap(a, b):
     return inter / small if small else 0
 
 
-def _slots(cols=6, rows=8):
-    """Jittered grid across the plantable area, minus the hero and text zones."""
-    x0, x1 = 40, config.CANVAS_W - 40
-    y0, y1 = config.CLOCK_ZONE_BOTTOM + 110, config.BOTTOM_UI_TOP  # +110 clears the 'reading now' line
+def _blocked(cx, cy):
+    """Zones a flower may not sit in: the hero, the type, the iOS buttons."""
+    if (config.CANVAS_W / 2 - 300 < cx < config.CANVAS_W / 2 + 300
+            and config.HERO_CENTER_Y - 340 < cy < config.TEXT_TOP - 30):
+        return True
+    if (40 < cx < config.CANVAS_W - 40
+            and config.TEXT_TOP - 40 < cy < config.TEXT_TOP + 300):
+        return True
+    if cy > config.BUTTON_ZONE_TOP and (cx < config.BUTTON_ZONE_W
+                                        or cx > config.CANVAS_W - config.BUTTON_ZONE_W):
+        return True
+    return False
+
+
+def _seats(cols=6, rows=11):
+    """Planting order: bottom center first, then outward and upward.
+
+    Rows fill from the bottom of the screen up. Within a row, seats nearest
+    the middle are taken first. As the bottom fills, later books climb the
+    sides past the hero and finally arch over the top — which is how the
+    garden grows over a year.
+    """
+    x0, x1 = 30, config.CANVAS_W - 30
+    y0, y1 = config.CLOCK_ZONE_BOTTOM + 110, config.BOTTOM_UI_TOP
     cw, ch = (x1 - x0) / cols, (y1 - y0) / rows
 
-    hero = (config.CANVAS_W / 2 - 300, config.HERO_CENTER_Y - 340,
-            config.CANVAS_W / 2 + 300, config.TEXT_TOP - 30)
-    text = (40, config.TEXT_TOP - 40, config.CANVAS_W - 40, config.TEXT_TOP + 300)
-
-    out = []
+    seats = []
     for r in range(rows):
         for c in range(cols):
-            rng = random.Random(r * 100 + c)
-            cx = x0 + cw * (c + 0.5) + rng.uniform(-cw * 0.22, cw * 0.22)
-            cy = y0 + ch * (r + 0.5) + rng.uniform(-ch * 0.22, ch * 0.22)
-            if hero[0] < cx < hero[2] and hero[1] < cy < hero[3]:
+            rng = random.Random(r * 137 + c * 31)
+            cx = x0 + cw * (c + 0.5) + rng.uniform(-cw * 0.26, cw * 0.26)
+            cy = y0 + ch * (r + 0.5) + rng.uniform(-ch * 0.24, ch * 0.24)
+            if _blocked(cx, cy):
                 continue
-            if text[0] < cx < text[2] and text[1] < cy < text[3]:
-                continue
-            out.append((cx, cy))
+            seats.append((r, abs(cx - config.CANVAS_W / 2), cx, cy))
 
-    # nearest the hero first, so the most recent finishes sit closest to it
-    out.sort(key=lambda p: math.hypot(p[0] - config.CANVAS_W / 2,
-                                      (p[1] - config.HERO_CENTER_Y) * 0.75))
-    return out
+    # bottom rows first (high r), and within a row the middle first
+    seats.sort(key=lambda s: (-s[0], s[1]))
+    return [(cx, cy) for _, _, cx, cy in seats]
 
 
 def _place_garden(canvas, garden):
-    """garden: list of (book_id, png_path), most recently finished first."""
+    """garden: (book_id, png_path), OLDEST first — the first planted."""
     n = len(garden)
     if n == 0:
         return
-    slots = _slots()
-    if not slots:
-        return
+    seats = _seats()
+    if n > len(seats):
+        seats = _seats(cols=7, rows=13)
 
-    # If the year outgrows the grid, subdivide it rather than stacking.
-    if n > len(slots):
-        slots = _slots(cols=7, rows=10)
+    hero_x, hero_y = config.CANVAS_W / 2, config.HERO_CENTER_Y
+    far = math.hypot(config.CANVAS_W / 2, config.CANVAS_H / 2)
 
-    for i, (book_id, path) in enumerate(garden[:len(slots)]):
-        t = i / max(1, n - 1)                      # 0 = newest, 1 = oldest
-        h = config.GARDEN_MAX_H + t * (config.GARDEN_MIN_H - config.GARDEN_MAX_H)
-        alpha = int(config.GARDEN_MAX_ALPHA +
-                    t * (config.GARDEN_MIN_ALPHA - config.GARDEN_MAX_ALPHA))
-        img = _scaled(path, h, alpha)
-
+    for (book_id, path), (cx, cy) in zip(garden, seats):
         rng = random.Random(int(hashlib.md5(book_id.encode()).hexdigest()[:8], 16))
-        cx, cy = slots[i]
-        cx += rng.uniform(-40, 40)
-        cy += rng.uniform(-40, 40)
 
-        x = int(min(max(20, cx - img.width / 2), config.CANVAS_W - 20 - img.width))
-        y = int(min(max(config.CLOCK_ZONE_BOTTOM + 60, cy - img.height / 2),
-                    config.BOTTOM_UI_TOP - img.height))
+        # Nearer the hero reads as nearer the viewer, so it's drawn larger.
+        d = math.hypot(cx - hero_x, (cy - hero_y) * 0.8) / far
+        h = config.GARDEN_MAX_H - (config.GARDEN_MAX_H - config.GARDEN_MIN_H) * min(1, d)
+        h *= rng.uniform(0.92, 1.08)
+
+        img = _scaled(path, h)
+        tilt = rng.uniform(-config.MAX_TILT, config.MAX_TILT)
+        img = img.rotate(tilt, resample=Image.BICUBIC, expand=True)
+
+        x = int(min(max(10, cx - img.width / 2), config.CANVAS_W - 10 - img.width))
+        y = int(min(max(config.CLOCK_ZONE_BOTTOM + 40, cy - img.height / 2),
+                    config.CANVAS_H - 10 - img.height))
         canvas.alpha_composite(img, (x, y))
 
 

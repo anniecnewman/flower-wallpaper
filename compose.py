@@ -149,11 +149,22 @@ def _harmonize(img):
         return img
 
     wash = np.isin(labels, list(seeds)) & near
-    opaque = (alpha > 128).sum()
-    # A wash is legitimately most of the opaque area — the plant itself is
-    # thin. Only refuse if it would repaint essentially everything.
-    if not opaque or wash.sum() / opaque > 0.94:
+    if wash.sum() < 400:
         return img
+
+    # A wash is legitimately most of the opaque area when the plant is slender,
+    # so "how much would this repaint?" is the wrong question. Two better ones:
+    # does a real plant survive, and is the candidate region actually flat?
+    opaque = (alpha > 128).sum()
+    if opaque - wash.sum() < 900:         # nothing left but a ghost
+        return img
+
+    grey = rgb.mean(axis=2).astype(np.float32)
+    local_mean = ndimage.uniform_filter(grey, size=5)
+    local_var = ndimage.uniform_filter(grey * grey, size=5) - local_mean ** 2
+    texture = np.sqrt(np.maximum(local_var, 0))
+    if float(np.median(texture[wash])) > config.HARMONIZE_MAX_TEXTURE:
+        return img                        # too much detail — that's drawing
 
     # Soften the join so a gradient wash doesn't leave a visible step.
     edge = ndimage.binary_dilation(wash, iterations=2) & ~wash & pale & (alpha > 0)

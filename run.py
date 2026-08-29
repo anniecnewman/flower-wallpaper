@@ -111,13 +111,16 @@ def main():
             log(f"  drew {book['flower']}")
             url = f"{config.RAW_BASE}/flowers/{key}.png"
             notion_io.write_flower(book["id"], image_url=url)
+        if generate_flower.recut_file(local):
+            log(f"  re-cut background off {os.path.basename(local)}")
         book["_png"] = local
 
     if args.dry_run:
         log("Dry run complete — no images drawn, no wallpaper built.")
         return
 
-    year_books.sort(key=lambda b: b["completed"] or "", reverse=True)
+    # Oldest first: the earliest books of the year are planted at the bottom.
+    year_books.sort(key=lambda b: b["completed"] or "")
     garden = [(b["id"], b["_png"]) for b in year_books if b.get("_png")]
 
     hero = None

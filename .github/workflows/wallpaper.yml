@@ -2,7 +2,7 @@ name: Build flower wallpaper
 
 on:
   schedule:
-    - cron: "0 9 * * *"       # 09:00 UTC daily — ~5am Eastern
+    - cron: "47 12 * * *"       # 012:47 UTC daily — ~8:47am Eastern
   workflow_dispatch:           # the "Run workflow" button in the Actions tab
     inputs:
       dry_run:

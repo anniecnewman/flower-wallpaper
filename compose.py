@@ -5,6 +5,7 @@ Placement is deterministic — seeded from each book's Notion id — so a flower
 keeps its seat in the garden from one day to the next.
 """
 
+import datetime
 import hashlib
 import math
 import os
@@ -97,86 +98,149 @@ def _centered(draw, y, text, font, fill, tracking=0):
 
 
 # ------------------------------------------------------------------ layout
+def season_now():
+    """Which season's palette to use."""
+    name = config.SEASON
+    if name != "auto":
+        return name if name in config.SEASONS else "summer"
+    m = datetime.date.today().month
+    if m in (3, 4, 5):
+        return "spring"
+    if m in (6, 7, 8):
+        return "summer"
+    if m in (9, 10, 11):
+        return "autumn"
+    return "winter"
+
+
+def season_palette():
+    return config.SEASONS[season_now()]
+
+
+def _seasonal(img):
+    """Turn summer greens toward the season, leaving petals untouched.
+
+    Only pixels whose hue sits in the green band are altered — a botanical
+    plate reads spring or autumn through its foliage, and shifting everything
+    would just tint the whole picture.
+    """
+    _, _, hue_shift, desat, darken, warm = season_palette()
+    if not any((hue_shift, desat, darken, warm)):
+        return img
+
+    a = np.array(img.convert("RGBA"))
+    rgb = a[:, :, :3].astype(np.float32) / 255.0
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+
+    mx = rgb.max(axis=2)
+    mn = rgb.min(axis=2)
+    delta = mx - mn
+    sat = np.where(mx > 0, delta / np.maximum(mx, 1e-6), 0)
+
+    hue = np.zeros_like(mx)
+    nz = delta > 1e-6
+    idx = nz & (mx == r)
+    hue[idx] = ((g[idx] - b[idx]) / delta[idx]) % 6
+    idx = nz & (mx == g)
+    hue[idx] = (b[idx] - r[idx]) / delta[idx] + 2
+    idx = nz & (mx == b)
+    hue[idx] = (r[idx] - g[idx]) / delta[idx] + 4
+    hue = hue / 6.0
+
+    # Greens and yellow-greens only, and only where there's real colour.
+    leafy = (hue > 0.085) & (hue < 0.47) & (sat > 0.10) & (a[:, :, 3] > 0)
+
+    # Never re-tint what the harmoniser already set to the ground colour: the
+    # wash sits in the same hue band as the foliage, and shifting it would make
+    # the patch reappear.
+    g0, g1, g2 = season_palette()[0]
+    src = a[:, :, :3]
+    leafy &= ~((src[:, :, 0] == g0) & (src[:, :, 1] == g1) & (src[:, :, 2] == g2))
+    if not leafy.any():
+        return img
+
+    hue = np.where(leafy, (hue + hue_shift) % 1.0, hue)
+    sat = np.where(leafy, np.clip(sat * (1 - desat), 0, 1), sat)
+    val = np.where(leafy, mx * (1 - darken), mx)
+
+    # HSV back to RGB
+    i = np.floor(hue * 6).astype(int) % 6
+    f = hue * 6 - np.floor(hue * 6)
+    p = val * (1 - sat)
+    q = val * (1 - f * sat)
+    t = val * (1 - (1 - f) * sat)
+    out = np.zeros_like(rgb)
+    for k, (rr, gg, bb) in enumerate([(val, t, p), (q, val, p), (p, val, t),
+                                      (p, q, val), (t, p, val), (val, p, q)]):
+        m = i == k
+        out[:, :, 0][m] = rr[m]
+        out[:, :, 1][m] = gg[m]
+        out[:, :, 2][m] = bb[m]
+
+    if warm:
+        tint = np.array([1.0, 0.955, 0.86], np.float32)
+        out = np.where(leafy[:, :, None], out * (1 - warm) + out * tint * warm, out)
+
+    a[:, :, :3] = np.clip(out * 255, 0, 255).astype(np.uint8)
+    return Image.fromarray(a, "RGBA")
+
+
 def _harmonize(img):
-    """Repaint a flat background wash to the canvas colour so it disappears.
+    """Repaint the flat wash the model paints behind the plant.
 
-    Non-destructive: changes colour, never transparency. Worst case on a
-    misfire is a pale flower going cream — not the ghost outlines that
-    deleting pixels produced.
+    Measured across the whole garden, the wash is reliably light and
+    unsaturated — around (240, 228, 190) — while every part of the plant is
+    either darker or more saturated. So colour alone identifies it, and no
+    connectivity is needed. That matters: the wash is often an island cut off
+    from the transparent area by a band of semi-transparent pixels whose stored
+    colour is meaningless, which is why flood-filling from the edge kept
+    missing it.
 
-    Two shapes of wash occur. Usually the plant floats in transparency with a
-    painted patch behind it. Sometimes the wash covers the entire frame, and
-    after trimming there is no transparency at all — so the frame edge is used
-    as the seed instead.
+    The one thing colour can't distinguish is a genuinely pale petal. Those sit
+    inside closed ink outlines, so anything enclosed by drawn line is protected.
+
+    Colour only — alpha is never touched.
     """
     if not config.HARMONIZE:
         return img
+    ground = season_palette()[0]
     a = np.array(img.convert("RGBA"))
     rgb = a[:, :, :3].astype(np.int16)
     alpha = a[:, :, 3]
-    h, w = alpha.shape
 
-    clear = alpha < 24
     value = rgb.max(axis=2)
     sat = value - rgb.min(axis=2)
-    pale = (value >= 195) & (sat <= config.HARMONIZE_MAX_SAT)
-
-    if clear.mean() >= 0.02:
-        # Wash sits against the empty area; sample the colour along that edge.
-        ring = ndimage.binary_dilation(clear, iterations=3) & (alpha > 200) & pale
-    else:
-        # Wash fills the frame; sample the border instead.
-        ring = np.zeros_like(clear)
-        ring[:6, :] = ring[-6:, :] = True
-        ring[:, :6] = ring[:, -6:] = True
-        ring &= pale
-
-    if ring.sum() < 300:
-        return img
-    bg = np.median(rgb[ring], axis=0)
-
-    near = (np.abs(rgb - bg).max(axis=2) <= config.HARMONIZE_TOL) & pale & (alpha > 0)
-    ink = ndimage.binary_closing(~(near | clear), structure=np.ones((7, 7)))
-
-    labels, n = ndimage.label(~ink)
-    if not n:
-        return img
-    seeds = set(np.unique(labels[clear])) if clear.any() else set()
-    seeds |= set(labels[0, :]) | set(labels[-1, :]) | \
-             set(labels[:, 0]) | set(labels[:, -1])
-    seeds.discard(0)
-    if not seeds:
+    wash = (value >= config.HARMONIZE_MIN_VALUE) & \
+           (sat <= config.HARMONIZE_MAX_SAT) & (alpha > 0)
+    if not wash.any():
         return img
 
-    wash = np.isin(labels, list(seeds)) & near
-    if wash.sum() < 400:
+    # Protect anything the artist enclosed with a line: pale petals, pale
+    # centres, the inside of a bud.
+    ink = (value < config.HARMONIZE_INK) & (alpha > 128)
+    drawn = ndimage.binary_fill_holes(
+        ndimage.binary_closing(ink, structure=np.ones((9, 9))))
+    wash &= ~drawn
+    if not wash.any():
         return img
 
-    # A wash is legitimately most of the opaque area when the plant is slender,
-    # so "how much would this repaint?" is the wrong question. Two better ones:
-    # does a real plant survive, and is the candidate region actually flat?
-    opaque = (alpha > 128).sum()
-    if opaque - wash.sum() < 900:         # nothing left but a ghost
-        return img
+    # Anti-aliased edge pixels store a colour that was never meant to be seen —
+    # invisible on a pale ground, an obvious halo on a dark one. Setting them to
+    # the ground colour is just correct compositing; their alpha still carries
+    # the soft edge.
+    fringe = (alpha > 0) & (alpha < 210) & ~drawn
 
-    grey = rgb.mean(axis=2).astype(np.float32)
-    local_mean = ndimage.uniform_filter(grey, size=5)
-    local_var = ndimage.uniform_filter(grey * grey, size=5) - local_mean ** 2
-    texture = np.sqrt(np.maximum(local_var, 0))
-    if float(np.median(texture[wash])) > config.HARMONIZE_MAX_TEXTURE:
-        return img                        # too much detail — that's drawing
-
-    # Soften the join so a gradient wash doesn't leave a visible step.
-    edge = ndimage.binary_dilation(wash, iterations=2) & ~wash & pale & (alpha > 0)
     for ch in range(3):
-        a[:, :, ch][wash] = config.PAPER[ch]
-        blend = a[:, :, ch][edge].astype(np.int16)
-        a[:, :, ch][edge] = ((blend + config.PAPER[ch]) // 2).astype(np.uint8)
+        a[:, :, ch][wash] = ground[ch]
+        a[:, :, ch][fringe] = ground[ch]
     return Image.fromarray(a, "RGBA")
 
 
 def _scaled(path, target_h, alpha=255):
-    img = _harmonize(Image.open(path).convert("RGBA"))
+    # Harmonise first, on the original colours — the seasonal shift would
+    # saturate the wash out of detection range. _seasonal then skips anything
+    # already set to the ground.
+    img = _seasonal(_harmonize(Image.open(path).convert("RGBA")))
     ratio = target_h / img.height
     img = img.resize((max(1, int(img.width * ratio)), int(target_h)),
                      Image.LANCZOS)
@@ -386,13 +450,15 @@ def _place_garden(canvas, garden):
 def build(current, garden, out_path):
     """current: dict with title / flower / adjectives / png path (or None).
        garden:  list of (book_id, png_path), newest finished first."""
-    canvas = Image.new("RGBA", (config.CANVAS_W, config.CANVAS_H),
-                       config.PAPER + (255,))
+    ground, ink_rgb = season_palette()[0], season_palette()[1]
+    canvas = Image.new("RGBA", (config.CANVAS_W, config.CANVAS_H), ground + (255,))
 
     _place_garden(canvas, garden)
 
-    ink = (58, 52, 44, 255)
-    faded = (120, 110, 96, 255)
+    ink = ink_rgb + (255,)
+    # Blend toward the ground rather than toward white, so the subtitle stays
+    # readable whether the canvas is pale cream or deep terracotta.
+    faded = tuple(int(i * 0.55 + g * 0.45) for i, g in zip(ink_rgb, ground)) + (255,)
     draw = ImageDraw.Draw(canvas)
 
     if current:

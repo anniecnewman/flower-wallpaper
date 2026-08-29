@@ -30,6 +30,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--year", type=int, default=dt.date.today().year)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--sample", type=int, default=0,
+                    help="draw only this many flowers, to check the style first")
     args = ap.parse_args()
 
     for name, val in (("NOTION_TOKEN", config.NOTION_TOKEN),
@@ -60,6 +62,15 @@ def main():
 
     current = reading[0] if reading else None
     needed = year_books + ([current] if current else [])
+
+    if args.sample:
+        # Current read first, then the most recent finishes.
+        by_recent = sorted(year_books, key=lambda b: b["completed"] or "",
+                           reverse=True)
+        needed = ([current] if current else []) + by_recent
+        needed = needed[:args.sample]
+        log(f"SAMPLE: drawing {len(needed)} flower(s) only. "
+            f"Run again without --sample for the rest.")
 
     # Every flower ever assigned is off the table, not just this year's.
     taken = {b["flower"] for b in all_books if b["flower"]}

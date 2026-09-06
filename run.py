@@ -55,19 +55,30 @@ def main():
     if not reading:
         log("Nothing marked 'reading' — the center will be empty. "
             "Mark a book as reading in Notion.")
-    elif len(reading) > 1:
-        reading.sort(key=lambda b: b["title"])
-        log(f"{len(reading)} books marked 'reading'; featuring "
-            f"{reading[0]['title']!r}.")
 
-    current = reading[0] if reading else None
-    needed = year_books + ([current] if current else [])
+    # More than one book on the go: rotate which is featured, a different one
+    # each day. Sorted by id so the order is stable, then indexed by the day
+    # number — so the same book shows all day, and tomorrow it's the next one.
+    reading.sort(key=lambda b: b["id"])
+    if len(reading) > 1:
+        pick = dt.date.today().toordinal() % len(reading)
+        titles = ", ".join(b["title"] for b in reading)
+        log(f"{len(reading)} books marked 'reading' ({titles}) — "
+            f"featuring {reading[pick]['title']!r} today.")
+    else:
+        pick = 0
+
+    current = reading[pick] if reading else None
+
+    # Every book being read gets its flower drawn, not just today's, so the
+    # rotation never waits on an image.
+    needed = year_books + reading
 
     if args.sample:
         # Current read first, then the most recent finishes.
         by_recent = sorted(year_books, key=lambda b: b["completed"] or "",
                            reverse=True)
-        needed = ([current] if current else []) + by_recent
+        needed = list(reading) + by_recent
         needed = needed[:args.sample]
         log(f"SAMPLE: drawing {len(needed)} flower(s) only. "
             f"Run again without --sample for the rest.")
